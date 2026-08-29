@@ -1,0 +1,36 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache & build
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Node.js & Frontend dependencies
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.vite/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files & logs
+scratch/
+*.log
+.env
+.DS_Store
+Thumbs.db
+
+# Heavy model weights and video test outputs (downloaded on runtime)
+yolov8n.pt
+*.pt
+data/
