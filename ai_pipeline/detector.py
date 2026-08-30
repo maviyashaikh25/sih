@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional
@@ -23,16 +24,29 @@ COLOR_RANGES = {
 }
 
 class VehicleDetector:
-    def __init__(self, model_name: str = "yolov8n.pt"):
-        print(f"Loading YOLO Vehicle Detector ({model_name})...")
-        self.model = YOLO(model_name)
+    """
+    Cascaded Deep Learning Vehicle and License Plate Detector.
+    Uses YOLOv8 for vehicle classification & localization, and fine-tuned YOLOv8-Plate model
+    (or adaptive morphological localization) for precise plate bounding boxes.
+    """
+    def __init__(self, vehicle_model_name: str = "yolov8n.pt", plate_model_name: str = "ai_pipeline/best_plate_yolov8.pt"):
+        print(f"Loading YOLO Vehicle Detector ({vehicle_model_name})...")
+        self.vehicle_model = YOLO(vehicle_model_name)
+        
+        self.plate_model = None
+        if os.path.exists(plate_model_name):
+            try:
+                print(f"Loading fine-tuned License Plate Model ({plate_model_name})...")
+                self.plate_model = YOLO(plate_model_name)
+            except Exception as e:
+                print(f"Notice: Could not load plate model ({e}). Using morphological ROI detector.")
 
     def detect_vehicles(self, frame: np.ndarray, conf_threshold: float = 0.35) -> List[dict]:
         """
         Runs YOLO object detection to find vehicles in the frame.
         Returns bounding boxes, vehicle class name, and confidence score.
         """
-        results = self.model(frame, verbose=False, conf=conf_threshold)[0]
+        results = self.vehicle_model(frame, verbose=False, conf=conf_threshold)[0]
         detections = []
 
         for box in results.boxes:
@@ -70,7 +84,8 @@ class VehicleDetector:
     def locate_plate_roi(self, vehicle_crop: np.ndarray) -> Tuple[Optional[Tuple[int, int, int, int]], Optional[np.ndarray]]:
         """
         Locates the license plate candidate region within the vehicle bounding box crop.
-        Uses morphological edge filtering and aspect ratio heuristics (aspect ratio ~ 2.0 to 5.0).
+        If a fine-tuned deep learning plate model is loaded, runs YOLO inference on the vehicle crop.
+        Otherwise, applies morphological edge filtering and aspect ratio heuristics.
         """
         if vehicle_crop is None or vehicle_crop.size == 0:
             return None, None
@@ -79,14 +94,27 @@ class VehicleDetector:
         if vh < 40 or vw < 60:
             return None, None
 
-        # Lower 60% of the vehicle is where plates are typically located (front/rear bumper)
+        # 1. Try Deep Learning Plate Detector if available
+        if self.plate_model is not None:
+            try:
+                p_res = self.plate_model(vehicle_crop, verbose=False, conf=0.25)[0]
+                if len(p_res.boxes) > 0:
+                    best_p_box = max(p_res.boxes, key=lambda b: float(b.conf[0].item()))
+                    px1, py1, px2, py2 = map(int, best_p_box.xyxy[0].tolist())
+                    px1, py1 = max(0, px1), max(0, py1)
+                    px2, py2 = min(vw, px2), min(vh, py2)
+                    plate_crop = vehicle_crop[py1:py2, px1:px2]
+                    if plate_crop.size > 0:
+                        return (px1, py1, px2, py2), plate_crop
+            except Exception:
+                pass
+
+        # 2. Morphological Edge & Gradient Localization (Fallback)
         lower_y = int(vh * 0.40)
         roi = vehicle_crop[lower_y:vh, 0:vw]
         roi_h, roi_w = roi.shape[:2]
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        
-        # Morphological gradient to highlight high contrast plate boundaries
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
         morph = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
 
@@ -94,7 +122,6 @@ class VehicleDetector:
         sobelx = cv2.GaussianBlur(sobelx, (5, 5), 0)
         _, thresh = cv2.threshold(sobelx, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        # Close gaps between characters
         close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 5))
         closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, close_kernel)
 
@@ -109,7 +136,6 @@ class VehicleDetector:
             aspect_ratio = float(w) / float(h)
             area = w * h
             
-            # Standard Indian License plate aspect ratio: 2.2 to 5.2, area between 2% and 40% of ROI
             if 2.0 <= aspect_ratio <= 5.5 and (0.02 * roi_w * roi_h) <= area <= (0.45 * roi_w * roi_h):
                 pad_x = int(w * 0.05)
                 pad_y = int(h * 0.05)
@@ -123,7 +149,7 @@ class VehicleDetector:
                 best_crop = vehicle_crop[py1:py2, px1:px2]
                 break
 
-        # Fallback: If no strict contour found, extract standard lower-center bumper window
+        # Fallback: Extract standard lower-center bumper window
         if best_crop is None or best_crop.size == 0:
             bw_w = int(vw * 0.50)
             bw_h = int(vh * 0.22)
@@ -141,7 +167,6 @@ class VehicleDetector:
         if vehicle_crop is None or vehicle_crop.size == 0:
             return "Unknown"
 
-        # Sample the central 50% region of the vehicle to avoid road/background colors
         vh, vw = vehicle_crop.shape[:2]
         center_crop = vehicle_crop[int(vh*0.25):int(vh*0.75), int(vw*0.25):int(vw*0.75)]
         if center_crop.size == 0:

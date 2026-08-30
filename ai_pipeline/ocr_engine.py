@@ -2,7 +2,7 @@ import re
 import cv2
 import numpy as np
 from typing import Tuple, Optional, List
-from ai_pipeline.preprocessing import prepare_plate_for_ocr
+from ai_pipeline.preprocessing import prepare_plate_for_ocr, apply_clahe
 
 INDIAN_STATE_CODES = [
     "AN", "AP", "AR", "AS", "BR", "CH", "CG", "DD", "DL", "DN", "GA", 
@@ -69,38 +69,75 @@ def build_character_templates() -> dict[str, np.ndarray]:
 CHAR_TEMPLATES = build_character_templates()
 
 class PlateOCREngine:
-    def __init__(self, gpu: bool = False):
+    """
+    Hybrid Deep-Learning + Morphological License Plate OCR Engine.
+    Combines EasyOCR PyTorch neural text recognizer, adaptive CLAHE/dewarping preprocessor,
+    and strict Indian HSRP positional syntax validation.
+    """
+    def __init__(self, use_deep_ocr: bool = True, gpu: bool = False):
         self.templates = CHAR_TEMPLATES
-
-    def disambiguate_d_vs_o(self, char_crop: np.ndarray, predicted_ch: str) -> str:
-        if predicted_ch in ('O', '0'):
-            h, w = char_crop.shape[:2]
-            if w > 8 and h > 10:
-                mid_left = char_crop[int(h*0.25):int(h*0.75), 0:max(1, int(w*0.25))]
-                density = float(np.mean(mid_left)) / 255.0
-                if density > 0.65:
-                    return 'D'
-        return predicted_ch
+        self.use_deep_ocr = use_deep_ocr
+        self.easyocr_reader = None
+        
+        if use_deep_ocr:
+            try:
+                import easyocr
+                # Initialize EasyOCR reader for English alphanumeric characters
+                self.easyocr_reader = easyocr.Reader(['en'], gpu=gpu, verbose=False)
+                print("Deep Learning OCR (EasyOCR PyTorch backend) initialized successfully.")
+            except Exception as e:
+                print(f"Notice: EasyOCR fallback to high-speed morphological matcher ({e})")
+                self.easyocr_reader = None
 
     def extract_text_from_plate(self, plate_crop: np.ndarray) -> Tuple[str, float, str]:
         """
-        Extracts license plate text using character segmentation, contour splitting for merged letters,
-        template correlation matching, and Indian registration grammar rules.
+        Runs multi-stage OCR extraction on plate crop:
+        1. Preprocessing (CLAHE, perspective rectification, noise reduction)
+        2. Deep Learning OCR / Neural recognizer
+        3. Fallback character contour correlation matching
+        4. Indian HSRP positional grammar normalization
         """
         if plate_crop is None or plate_crop.size == 0:
             return "", 0.0, ""
 
+        # Preprocessing: CLAHE contrast boost and bilateral smoothing
+        preprocessed = prepare_plate_for_ocr(plate_crop)
+
+        # Stage 1: Try Deep Learning OCR if available
+        if self.easyocr_reader is not None:
+            try:
+                results = self.easyocr_reader.readtext(
+                    preprocessed,
+                    allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                    detail=1,
+                    paragraph=False
+                )
+                if results:
+                    # Combine high confidence text chunks
+                    detected_text = "".join([res[1] for res in results])
+                    avg_conf = float(np.mean([res[2] for res in results]))
+                    
+                    cleaned_text = re.sub(r'[^A-Z0-9]', '', detected_text.upper())
+                    if len(cleaned_text) >= 8:
+                        norm_plate, format_conf = self.normalize_indian_plate(cleaned_text)
+                        final_conf = round(avg_conf * 0.4 + format_conf * 0.6, 2)
+                        return norm_plate, final_conf, cleaned_text
+            except Exception:
+                pass # Fallback to template matching
+
+        # Stage 2: Robust Morphological & Correlation Segmentation OCR
+        return self._extract_text_morphological(preprocessed)
+
+    def _extract_text_morphological(self, plate_crop: np.ndarray) -> Tuple[str, float, str]:
         gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY) if len(plate_crop.shape) == 3 else plate_crop
         _, thresh = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
         h, w = thresh.shape[:2]
-        # Ignore IND blue strip on left margin and outer border
         ind_strip_boundary = int(w * 0.08)
         thresh[:, 0:ind_strip_boundary] = 0
         thresh[0:max(1, int(h * 0.05)), :] = 0
         thresh[int(h * 0.95):h, :] = 0
 
-        # Find character contours
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         char_boxes = []
 
@@ -112,7 +149,6 @@ class PlateOCREngine:
 
             if cx >= ind_strip_boundary and 0.16 <= height_ratio <= 0.85 and (area >= 0.002 * w * h):
                 if aspect > 1.35 and cw > 35:
-                    # Split two merged touching characters
                     half_w = cw // 2
                     char_boxes.append((cx, cy, half_w, ch_h))
                     char_boxes.append((cx + half_w, cy, cw - half_w, ch_h))
@@ -137,7 +173,13 @@ class PlateOCREngine:
                     best_score = score
                     best_ch = ch
 
-            best_ch = self.disambiguate_d_vs_o(crop, best_ch)
+            if best_ch in ('O', '0'):
+                h_c, w_c = crop.shape[:2]
+                if w_c > 8 and h_c > 10:
+                    mid_left = crop[int(h_c*0.25):int(h_c*0.75), 0:max(1, int(w_c*0.25))]
+                    density = float(np.mean(mid_left)) / 255.0
+                    if density > 0.65:
+                        best_ch = 'D'
 
             if best_score >= 0.20 and best_ch != "?":
                 extracted_chars.append(best_ch)
@@ -146,13 +188,19 @@ class PlateOCREngine:
         raw_plate = "".join(extracted_chars)
         avg_conf = float(np.mean(confidences)) if confidences else 0.50
 
-        # Apply positional grammar normalization
         normalized_plate, format_conf = self.normalize_indian_plate(raw_plate)
         final_conf = round(avg_conf * 0.5 + format_conf * 0.5, 2)
 
         return normalized_plate, final_conf, raw_plate
 
     def normalize_indian_plate(self, text: str) -> Tuple[str, float]:
+        """
+        Applies strict Indian HSRP registration grammar rules:
+        - Pos 0-1: State Code ([A-Z]{2}) with fuzzy auto-correction to nearest valid state code
+        - Pos 2-3: District RTO Code ([0-9]{2})
+        - Pos 4..N-4: Series Code ([A-Z]{1,3})
+        - Pos N-4..N: Vehicle Unique Digits ([0-9]{4})
+        """
         cleaned = re.sub(r'[^A-Z0-9]', '', text.upper())
         if len(cleaned) < 8:
             return cleaned, 0.60
@@ -170,7 +218,7 @@ class PlateOCREngine:
         candidate_state = "".join(char_list[:2])
         if candidate_state not in INDIAN_STATE_CODES:
             for valid_st in INDIAN_STATE_CODES:
-                if valid_st[1] == candidate_state[1]: # e.g. OL -> DL
+                if valid_st[1] == candidate_state[1]: # e.g. OL -> DL, UR -> HR
                     char_list[0] = valid_st[0]
                     break
 
@@ -197,7 +245,7 @@ class PlateOCREngine:
 
         if re.match(std_pattern, normalized):
             state_code = normalized[:2]
-            conf_boost = 0.98 if state_code in INDIAN_STATE_CODES else 0.90
+            conf_boost = 0.98 if state_code in INDIAN_STATE_CODES else 0.92
             return normalized, conf_boost
         elif re.match(bh_pattern, normalized):
             return normalized, 0.95

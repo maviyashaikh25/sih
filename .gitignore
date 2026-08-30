@@ -34,3 +34,4 @@ Thumbs.db
 yolov8n.pt
 *.pt
 data/
+runs/

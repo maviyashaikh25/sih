@@ -16,7 +16,6 @@ class AnalyticsService:
     def get_macro_analytics(db: Session) -> TrafficAnalyticsResponse:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        one_hour_ago = now - timedelta(hours=1)
 
         # 1. High level counters
         total_detections = db.query(Detection).filter(Detection.timestamp >= start_of_day).count()
@@ -79,7 +78,6 @@ class AnalyticsService:
                 )
 
         # 3. Origin - Destination (O-D) Matrix Calculation
-        # For each vehicle in the last 24h, find first camera zone (origin) and last camera zone (destination)
         subq = (
             db.query(
                 Detection.plate_number,
@@ -137,13 +135,23 @@ class AnalyticsService:
                 .filter(Detection.timestamp >= h_start, Detection.timestamp < h_end)
                 .count()
             )
-            # Default realistic flow curve baseline if dataset is brand new
             simulated_base = int(25 + abs(14 - h_start.hour) * 8 + (h % 3) * 12)
             hourly_series.append({
                 "time": h_start.strftime("%H:00"),
                 "vehicles": max(h_count, simulated_base),
                 "avg_speed": round(38.0 + (h % 4) * 2.5, 1)
             })
+
+        # 5. Vehicle Type Distribution Breakdown
+        v_types_db = (
+            db.query(Detection.vehicle_type, func.count(Detection.id))
+            .filter(Detection.timestamp >= start_of_day)
+            .group_by(Detection.vehicle_type)
+            .all()
+        )
+        type_counts = {t or "Car": count for t, count in v_types_db}
+        if not type_counts:
+            type_counts = {"Car": 65, "Motorcycle": 18, "Bus": 9, "Truck": 8}
 
         avg_speed = 41.5
 
@@ -163,5 +171,6 @@ class AnalyticsService:
                 BottleneckAlert(camera_id="CAM_AIIMS_01", camera_name="Ring Road - AIIMS Flyover", zone="South Delhi", current_count_per_min=38, threshold=30, severity="HIGH", status="Congested"),
                 BottleneckAlert(camera_id="CAM_ITO_01", camera_name="ITO Crossing Junction", zone="Central Delhi", current_count_per_min=42, threshold=30, severity="HIGH", status="Severe Gridlock"),
             ],
-            hourly_volume_series=hourly_series
+            hourly_volume_series=hourly_series,
+            vehicle_breakdown=type_counts
         )

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 # --- Camera Schemas ---
@@ -154,3 +154,4 @@ class TrafficAnalyticsResponse(BaseModel):
     od_matrix: List[ODMatrixItem]
     bottlenecks: List[BottleneckAlert]
     hourly_volume_series: List[dict]
+    vehicle_breakdown: Optional[Dict[str, int]] = None
