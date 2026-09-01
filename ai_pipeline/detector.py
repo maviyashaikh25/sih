@@ -110,11 +110,20 @@ class VehicleDetector:
                 pass
 
         # 2. Morphological Edge & Gradient Localization (Fallback)
-        lower_y = int(vh * 0.40)
-        roi = vehicle_crop[lower_y:vh, 0:vw]
+        lower_y = int(vh * 0.45)
+        roi_h_end = int(vh * 0.95)
+        roi_w_start = int(vw * 0.10)
+        roi_w_end = int(vw * 0.90)
+        
+        roi = vehicle_crop[lower_y:roi_h_end, roi_w_start:roi_w_end]
         roi_h, roi_w = roi.shape[:2]
 
+        if roi_h < 15 or roi_w < 30:
+            return None, None
+
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # High-pass filter & Morphological Tophat to emphasize text / plate edges
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
         morph = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
 
@@ -133,28 +142,29 @@ class VehicleDetector:
 
         for c in contours:
             x, y, w, h = cv2.boundingRect(c)
-            aspect_ratio = float(w) / float(h)
+            aspect_ratio = float(w) / float(h) if h > 0 else 0
             area = w * h
             
-            if 2.0 <= aspect_ratio <= 5.5 and (0.02 * roi_w * roi_h) <= area <= (0.45 * roi_w * roi_h):
-                pad_x = int(w * 0.05)
-                pad_y = int(h * 0.05)
+            # Plate typically has aspect ratio between 2.2 and 5.5 and takes 2% to 35% of the ROI
+            if 2.2 <= aspect_ratio <= 5.8 and (0.02 * roi_w * roi_h) <= area <= (0.35 * roi_w * roi_h):
+                pad_x = int(w * 0.10)
+                pad_y = int(h * 0.15)
                 
-                px1 = max(0, x - pad_x)
+                px1 = max(0, roi_w_start + x - pad_x)
                 py1 = max(0, lower_y + y - pad_y)
-                px2 = min(vw, x + w + pad_x)
+                px2 = min(vw, roi_w_start + x + w + pad_x)
                 py2 = min(vh, lower_y + y + h + pad_y)
 
                 best_box = (px1, py1, px2, py2)
                 best_crop = vehicle_crop[py1:py2, px1:px2]
                 break
 
-        # Fallback: Extract standard lower-center bumper window
+        # Fallback: Extract standard lower-center bumper window where license plates reside
         if best_crop is None or best_crop.size == 0:
-            bw_w = int(vw * 0.50)
-            bw_h = int(vh * 0.22)
+            bw_w = int(vw * 0.65)
+            bw_h = int(vh * 0.35)
             bx1 = int((vw - bw_w) / 2)
-            by1 = int(vh * 0.65)
+            by1 = int(vh * 0.52)
             bx2 = bx1 + bw_w
             by2 = min(vh, by1 + bw_h)
             best_box = (bx1, by1, bx2, by2)

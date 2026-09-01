@@ -141,13 +141,13 @@ export default function AlertsTab({
                 No active unresolved security alerts in this category.
               </div>
             ) : (
-              filteredAlerts.map((alert) => {
+              filteredAlerts.map((alert, aIdx) => {
                 const isResolved = alert.is_resolved;
                 const isCritical = alert.severity === "CRITICAL";
 
                 return (
                   <div
-                    key={alert.id}
+                    key={`alert-${alert.id ?? ''}-${alert.plate_number ?? ''}-${alert.timestamp ?? ''}-${aIdx}`}
                     className={`p-3.5 rounded-xl border transition-all ${
                       isResolved
                         ? "bg-slate-900/40 border-slate-800 opacity-60"

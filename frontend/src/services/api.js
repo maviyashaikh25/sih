@@ -113,6 +113,19 @@ export const api = {
   async triggerSimulationStep() {
     const res = await fetch(`${API_BASE}/simulation/trigger_step`, { method: "POST" });
     return res.json();
+  },
+
+  // Custom Feed Upload
+  async uploadCameraFeed(formData) {
+    const res = await fetch(`${API_BASE}/feed/upload`, {
+      method: "POST",
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to upload and process feed");
+    }
+    return res.json();
   }
 };
 

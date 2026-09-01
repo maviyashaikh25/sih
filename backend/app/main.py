@@ -9,8 +9,11 @@ from app.models import Camera, Detection, Blacklist, Alert
 from app.services.simulation_service import SimulationService
 from app.websocket_manager import ws_manager
 
+import os
+from fastapi.staticfiles import StaticFiles
+
 # Import API routers
-from app.routers import cameras, detections, trajectories, analytics, alerts, simulation
+from app.routers import cameras, detections, trajectories, analytics, alerts, simulation, feed_upload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +55,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Static file serving for user-uploaded camera feeds
+UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "uploaded_feeds"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploaded_feeds", StaticFiles(directory=UPLOAD_DIR), name="uploaded_feeds")
+
 # Include Routers with API v1 prefix
 app.include_router(cameras.router, prefix=settings.API_V1_STR)
 app.include_router(detections.router, prefix=settings.API_V1_STR)
@@ -59,6 +67,7 @@ app.include_router(trajectories.router, prefix=settings.API_V1_STR)
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 app.include_router(alerts.router, prefix=settings.API_V1_STR)
 app.include_router(simulation.router, prefix=settings.API_V1_STR)
+app.include_router(feed_upload.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def root():

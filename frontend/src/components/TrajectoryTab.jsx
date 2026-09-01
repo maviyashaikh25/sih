@@ -32,12 +32,40 @@ export default function TrajectoryTab({
   const [playbackSpeed, setPlaybackSpeed] = useState(1); // 1x, 2x, 4x
 
   // Quick select plate options
-  const DEMO_PLATES = [
-    { plate: "DL01AB1234", label: "Black Scorpio N", type: "CRITICAL ALERT" },
+  const DEFAULT_DEMO_PLATES = [
+    { plate: "DL01AB1234", label: "Corridor Target", type: "CRITICAL ALERT" },
     { plate: "HR26DQ9988", label: "White Creta", type: "STOLEN VEHICLE" },
     { plate: "UP16AX5544", label: "Silver Sedan", type: "REPEAT VIOLATOR" },
     { plate: "DL03CC8899", label: "Civilian Commuter", type: "NORMAL" }
   ];
+
+  const [activePlatesList, setActivePlatesList] = useState(DEFAULT_DEMO_PLATES);
+
+  useEffect(() => {
+    async function loadActivePlates() {
+      try {
+        const plates = await api.getActivePlates(6);
+        if (plates && plates.length > 0) {
+          const formatted = plates.map(p => ({
+            plate: p.plate_number,
+            label: `${p.sightings_count} hits`,
+            type: p.is_hotlist ? "HOTLIST" : "ACTIVE"
+          }));
+          // Merge unique plates
+          const merged = [...DEFAULT_DEMO_PLATES];
+          formatted.forEach(item => {
+            if (!merged.some(m => m.plate === item.plate)) {
+              merged.push(item);
+            }
+          });
+          setActivePlatesList(merged.slice(0, 7));
+        }
+      } catch (err) {
+        console.warn("Could not load active plates:", err);
+      }
+    }
+    loadActivePlates();
+  }, []);
 
   const fetchTrajectory = async (plate) => {
     if (!plate) return;
@@ -118,8 +146,8 @@ export default function TrajectoryTab({
 
         {/* Quick Suggestion Pills */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-slate-400 font-medium">Quick Demo:</span>
-          {DEMO_PLATES.map((item) => (
+          <span className="text-xs text-slate-400 font-medium">Quick Demo / Active:</span>
+          {activePlatesList.map((item) => (
             <button
               key={item.plate}
               onClick={() => handleQuickPlateSelect(item.plate)}

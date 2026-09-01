@@ -4,7 +4,7 @@ venv/
 env/
 ENV/
 
-# Python cache & build
+# Python Cache & Build Artifacts
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,26 +12,24 @@ __pycache__/
 dist/
 build/
 
-# Node.js & Frontend dependencies
+# Node.js & Frontend Build Outputs
 node_modules/
 frontend/node_modules/
 frontend/dist/
 .vite/
 
-# Database files
+# Database Files
 *.db
 *.sqlite
 *.sqlite3
 
-# Temporary files & logs
-scratch/
+# Logs & System Files
 *.log
 .env
 .DS_Store
 Thumbs.db
 
-# Heavy model weights and video test outputs (downloaded on runtime)
-yolov8n.pt
-*.pt
-data/
-runs/
+# Heavy Raw Datasets & Temporary Uploads (> 100MB / transient files)
+/data/kaggle_dataset/
+/backend/data/uploaded_feeds/*.mp4
+!/backend/data/uploaded_feeds/.gitkeep

@@ -96,9 +96,39 @@ export default function App() {
     }
   };
 
+  const handleNewDetection = (newDet) => {
+    setRecentDetections((prev) => {
+      // Prevent duplicate within 3s for same camera and plate
+      const isDupe = prev.some(
+        (d) => d.plate_number === newDet.plate_number && d.camera_id === newDet.camera_id && (Date.now() - new Date(d.timestamp).getTime()) < 3000
+      );
+      if (isDupe) return prev;
+      return [newDet, ...prev.slice(0, 49)];
+    });
+
+    if (newDet.hotlist) {
+      setToastAlert({
+        plate_number: newDet.plate_number,
+        camera_name: newDet.camera_name || newDet.camera_id,
+        camera_id: newDet.camera_id,
+        message: `HOTLIST TARGET ${newDet.plate_number} detected at ${newDet.camera_name || newDet.camera_id}`
+      });
+      setTimeout(() => setToastAlert(null), 6000);
+    }
+  };
+
   const handleSelectPlateForTrajectory = (plate) => {
     setSelectedPlateForTrajectory(plate);
     setActiveTab("TRAJECTORY");
+  };
+
+  const refreshCameras = async () => {
+    try {
+      const cams = await api.getCameras();
+      setCameras(cams);
+    } catch (e) {
+      console.warn("Failed to refresh cameras:", e);
+    }
   };
 
   const unresolvedAlerts = alerts.filter((a) => !a.is_resolved);
@@ -152,7 +182,9 @@ export default function App() {
             cameras={cameras}
             recentDetections={recentDetections}
             onSelectPlateForTrajectory={handleSelectPlateForTrajectory}
+            onNewDetection={handleNewDetection}
             activeAlerts={unresolvedAlerts}
+            onRefreshCameras={refreshCameras}
           />
         )}
 

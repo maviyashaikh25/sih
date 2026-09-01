@@ -1,0 +1,7 @@
+path: C:/Users/Maviya Shaikh/Documents/sih/data/yolo_plate_dataset
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: license_plate
