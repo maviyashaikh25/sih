@@ -127,3 +127,40 @@ class TrajectoryService:
             .all()
         )
         return [r[0] for r in results]
+
+    @staticmethod
+    def generate_sample_route_for_plate(db: Session, plate_number: str) -> TrajectoryResponse:
+        """Generates a realistic multi-camera journey for any plate on the fly."""
+        from datetime import datetime, timedelta, timezone
+        import random
+        from app.models import Camera, Detection
+        from app.services.alert_service import AlertService
+
+        plate_clean = plate_number.replace(" ", "").upper()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        
+        # Sample corridor across 5 cameras
+        sample_cams = ["CAM_KG_01", "CAM_CP_01", "CAM_IG_01", "CAM_AIIMS_01", "CAM_NP_01"]
+        for idx, cam_id in enumerate(sample_cams):
+            cam = db.query(Camera).filter(Camera.id == cam_id).first()
+            if not cam:
+                continue
+            timestamp = now - timedelta(minutes=(len(sample_cams) - idx) * 10 + 2)
+            det = Detection(
+                camera_id=cam_id,
+                plate_number=plate_clean,
+                raw_plate=plate_clean,
+                confidence=round(random.uniform(0.92, 0.98), 2),
+                vehicle_type="Car",
+                vehicle_color="White",
+                direction="Southbound",
+                speed_estimate_kmh=round(random.uniform(45.0, 62.0), 1),
+                timestamp=timestamp
+            )
+            db.add(det)
+            db.flush()
+            AlertService.check_and_generate_alerts(db, det)
+        
+        db.commit()
+        return TrajectoryService.get_vehicle_trajectory(db, plate_clean)
+

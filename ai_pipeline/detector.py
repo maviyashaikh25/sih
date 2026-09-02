@@ -1,5 +1,6 @@
 import os
 import cv2
+import torch
 import numpy as np
 from typing import List, Tuple, Optional
 from ultralytics import YOLO
@@ -46,7 +47,8 @@ class VehicleDetector:
         Runs YOLO object detection to find vehicles in the frame.
         Returns bounding boxes, vehicle class name, and confidence score.
         """
-        results = self.vehicle_model(frame, verbose=False, conf=conf_threshold)[0]
+        with torch.inference_mode():
+            results = self.vehicle_model(frame, verbose=False, conf=conf_threshold, imgsz=640)[0]
         detections = []
 
         for box in results.boxes:

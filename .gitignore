@@ -33,3 +33,8 @@ Thumbs.db
 /data/kaggle_dataset/
 /backend/data/uploaded_feeds/*.mp4
 !/backend/data/uploaded_feeds/.gitkeep
+/data/cctv_feeds/*.mp4
+!/data/cctv_feeds/.gitkeep
+*.mp4
+!frontend/public/videos/*.mp4
+

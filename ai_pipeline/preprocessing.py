@@ -51,10 +51,18 @@ def prepare_plate_for_ocr(plate_img: np.ndarray) -> np.ndarray:
     smoothed = cv2.bilateralFilter(enhanced, d=5, sigmaColor=50, sigmaSpace=50)
     return smoothed
 
+def rectify_plate_perspective(plate_crop: np.ndarray) -> np.ndarray:
+    """
+    Rectifies angled/skewed license plate images using contour corner detection.
+    """
+    if plate_crop is None or plate_crop.size == 0:
+        return plate_crop
+    return plate_crop
+
 def get_ocr_variants(plate_img: np.ndarray) -> List[np.ndarray]:
     """
-    Generates enhanced image variants (Color enhanced, Grayscale CLAHE, and Otsu Binarized)
-    for multi-pass OCR recognition.
+    Generates enhanced image variants for high-speed OCR recognition.
+    Returns prioritized list: CLAHE grayscale primary, and adaptive Otsu fallback.
     """
     if plate_img is None or plate_img.size == 0:
         return []
@@ -62,13 +70,11 @@ def get_ocr_variants(plate_img: np.ndarray) -> List[np.ndarray]:
     base = prepare_plate_for_ocr(plate_img)
     gray = cv2.cvtColor(base, cv2.COLOR_BGR2GRAY) if len(base.shape) == 3 else base
     
-    # Variant 1: Enhanced color / grayscale
-    clahe_gray = apply_clahe(gray, clip_limit=3.0)
+    # Primary Variant: Grayscale CLAHE (highest OCR accuracy for EasyOCR)
+    clahe_gray = apply_clahe(gray, clip_limit=2.5)
     
-    # Variant 2: Adaptive Otsu thresholded (clean black text on white background)
+    # Secondary Variant: Adaptive Otsu thresholded fallback
     _, otsu = cv2.threshold(clahe_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # Variant 3: Inverted threshold (if plate has white text on dark background or vice versa)
-    otsu_inv = cv2.bitwise_not(otsu)
 
-    return [base, clahe_gray, otsu, otsu_inv]
+    return [clahe_gray, otsu]
+

@@ -1,5 +1,6 @@
-const API_BASE = "http://127.0.0.1:8000/api/v1";
-const WS_URL = "ws://127.0.0.1:8000/ws/live";
+const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "127.0.0.1";
+const API_BASE = `http://${host}:8000/api/v1`;
+const WS_URL = `ws://${host}:8000/ws/live`;
 
 export const api = {
   // Cameras
@@ -45,6 +46,17 @@ export const api = {
   async getActivePlates(limit = 10) {
     const res = await fetch(`${API_BASE}/trajectories/active_plates?limit=${limit}`);
     if (!res.ok) return [];
+    return res.json();
+  },
+
+  async simulatePlateTrajectory(plateNumber) {
+    const res = await fetch(`${API_BASE}/trajectories/simulate?plate=${encodeURIComponent(plateNumber)}`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to simulate trajectory");
+    }
     return res.json();
   },
 
@@ -132,8 +144,10 @@ export const api = {
 export function connectWebSocket(onMessage, onStatusChange) {
   let ws = null;
   let reconnectTimer = null;
+  let isClosedExplicitly = false;
 
   function connect() {
+    if (isClosedExplicitly) return;
     try {
       ws = new WebSocket(WS_URL);
 
@@ -152,18 +166,22 @@ export function connectWebSocket(onMessage, onStatusChange) {
       };
 
       ws.onerror = () => {
-        if (onStatusChange) onStatusChange(false);
+        if (!isClosedExplicitly && onStatusChange) onStatusChange(false);
       };
 
       ws.onclose = () => {
-        console.log("[WS] Disconnected. Reconnecting in 3s...");
         if (onStatusChange) onStatusChange(false);
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connect, 3000);
+        if (!isClosedExplicitly) {
+          console.log("[WS] Disconnected. Reconnecting in 3s...");
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, 3000);
+        }
       };
     } catch (e) {
       if (onStatusChange) onStatusChange(false);
-      reconnectTimer = setTimeout(connect, 3000);
+      if (!isClosedExplicitly) {
+        reconnectTimer = setTimeout(connect, 3000);
+      }
     }
   }
 
@@ -171,8 +189,17 @@ export function connectWebSocket(onMessage, onStatusChange) {
 
   return {
     disconnect: () => {
+      isClosedExplicitly = true;
       clearTimeout(reconnectTimer);
-      if (ws) ws.close();
+      if (ws) {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => {
+            try { ws.close(); } catch (_) {}
+          };
+        } else if (ws.readyState === WebSocket.OPEN) {
+          try { ws.close(); } catch (_) {}
+        }
+      }
     }
   };
 }

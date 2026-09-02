@@ -102,6 +102,12 @@ class PlateOCREngine:
         if use_deep_ocr:
             try:
                 import easyocr
+                # Optimize PyTorch CPU threading
+                if not gpu:
+                    try:
+                        torch.set_num_threads(min(4, os.cpu_count() or 4))
+                    except Exception:
+                        pass
                 self.easyocr_reader = easyocr.Reader(['en'], gpu=gpu, verbose=False)
                 device_str = "CUDA GPU" if gpu else "CPU"
                 print(f"Deep Learning OCR (EasyOCR PyTorch backend on {device_str}) initialized successfully.")
@@ -111,13 +117,18 @@ class PlateOCREngine:
 
     def extract_text_from_plate(self, plate_crop: np.ndarray) -> Tuple[str, float, str]:
         """
-        Runs multi-stage OCR extraction on plate crop:
-        1. Multi-scale & contrast variant preprocessing
-        2. Deep Learning OCR / Neural recognizer
-        3. Indian HSRP positional grammar normalization & fuzzy repair
-        4. Strict confidence scoring
+        Runs multi-stage high-speed OCR extraction on plate crop:
+        1. Fast dimension filter (skips non-plate artifacts)
+        2. Contrast variant preprocessing
+        3. Deep Learning OCR with early-exit on confident Indian plate match
+        4. Strict Indian HSRP grammar normalization
+        5. High-speed morphological fallback
         """
         if plate_crop is None or plate_crop.size == 0:
+            return "", 0.0, ""
+
+        ph, pw = plate_crop.shape[:2]
+        if ph < 12 or pw < 28:
             return "", 0.0, ""
 
         variants = get_ocr_variants(plate_crop)
@@ -128,35 +139,40 @@ class PlateOCREngine:
         best_conf = 0.0
         best_raw = ""
 
-        # Stage 1: Try Deep Learning OCR across image enhancement variants
+        # Stage 1: Try Deep Learning OCR with early exit
         if self.easyocr_reader is not None:
-            for img_var in variants:
-                try:
-                    results = self.easyocr_reader.readtext(
-                        img_var,
-                        allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/-. ',
-                        detail=1,
-                        paragraph=False
-                    )
-                    if results:
-                        # Combine text lines if multiple chunks found on plate
-                        raw_combined = " ".join([res[1] for res in results])
-                        avg_conf = float(np.mean([res[2] for res in results]))
-                        
-                        norm_plate, format_conf = self.normalize_indian_plate(raw_combined)
-                        if norm_plate:
-                            final_conf = round(avg_conf * 0.45 + format_conf * 0.55, 2)
-                            if final_conf > best_conf:
-                                best_plate = norm_plate
-                                best_conf = final_conf
-                                best_raw = raw_combined
-                except Exception:
-                    pass
+            with torch.inference_mode():
+                for img_var in variants:
+                    try:
+                        results = self.easyocr_reader.readtext(
+                            img_var,
+                            allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/-. ',
+                            detail=1,
+                            paragraph=False,
+                            batch_size=1
+                        )
+                        if results:
+                            raw_combined = " ".join([res[1] for res in results])
+                            avg_conf = float(np.mean([res[2] for res in results]))
+                            
+                            norm_plate, format_conf = self.normalize_indian_plate(raw_combined)
+                            if norm_plate:
+                                final_conf = round(avg_conf * 0.45 + format_conf * 0.55, 2)
+                                if final_conf > best_conf:
+                                    best_plate = norm_plate
+                                    best_conf = final_conf
+                                    best_raw = raw_combined
+                                
+                                # Early exit: Stop immediately if high-confidence plate read
+                                if final_conf >= 0.75:
+                                    return best_plate, best_conf, best_raw
+                    except Exception:
+                        pass
 
             if best_plate and best_conf >= 0.50:
                 return best_plate, best_conf, best_raw
 
-        # Stage 2: Fallback to morphological segmentation if Deep OCR not available or low conf
+        # Stage 2: Fallback to high-speed morphological template matcher
         morph_plate, morph_conf, morph_raw = self._extract_text_morphological(variants[0])
         if morph_plate and morph_conf > best_conf:
             return morph_plate, morph_conf, morph_raw

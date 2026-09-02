@@ -147,9 +147,9 @@ export default function TrajectoryTab({
         {/* Quick Suggestion Pills */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400 font-medium">Quick Demo / Active:</span>
-          {activePlatesList.map((item) => (
+          {activePlatesList.map((item, idx) => (
             <button
-              key={item.plate}
+              key={`${item.plate}-${idx}`}
               onClick={() => handleQuickPlateSelect(item.plate)}
               className={`px-2.5 py-1 rounded-lg text-[11px] font-mono transition-all border ${
                 searchPlate === item.plate
@@ -184,23 +184,6 @@ export default function TrajectoryTab({
                 mode="TRAJECTORY"
                 height="500px"
               />
-
-              {/* Floating Active Hop Overlay */}
-              {currentPoint && (
-                <div className="absolute top-3 left-3 z-[1000] glass-card p-2.5 max-w-xs border border-cyan-400/40 backdrop-blur-md">
-                  <div className="flex items-center gap-1.5 text-xs text-cyan-400 font-bold">
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>Camera Hop #{activeStep + 1} of {trajectory.points.length}</span>
-                  </div>
-                  <div className="text-sm font-bold text-slate-100 mt-1">
-                    {currentPoint.camera_name}
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                    <span>{new Date(currentPoint.timestamp).toLocaleTimeString()}</span>
-                    <span className="text-amber-400">{currentPoint.speed_estimate_kmh} km/h</span>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Playback Control Bar */}

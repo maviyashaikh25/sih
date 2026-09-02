@@ -26,3 +26,9 @@ def query_trajectory(plate: str = Query(..., description="Vehicle license plate 
 def get_active_plates(limit: int = 10, db: Session = Depends(get_db)):
     """Returns a list of recently active plates for auto-complete and quick inspection."""
     return TrajectoryService.get_recent_active_plates(db, limit)
+
+@router.post("/simulate", response_model=TrajectoryResponse)
+def simulate_plate_trajectory(plate: str = Query(..., description="Vehicle license plate to simulate"), db: Session = Depends(get_db)):
+    """Generates and ingests a realistic 5-node city corridor trajectory for the given plate."""
+    return TrajectoryService.generate_sample_route_for_plate(db, plate)
+

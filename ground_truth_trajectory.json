@@ -1,0 +1,46 @@
+[
+  {
+    "detection_id": "DET-001",
+    "camera_id": "CAM-101",
+    "location_name": "North Avenue Intersection",
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "detected_plate": "KA05MH8899",
+    "ocr_confidence": 0.96,
+    "timestamp": "2026-09-02T14:10:04Z",
+    "video_file": "cam_01_north_avenue.mp4"
+  },
+  {
+    "detection_id": "DET-002",
+    "camera_id": "CAM-204",
+    "location_name": "Central Metro Junction",
+    "latitude": 12.9782,
+    "longitude": 77.6011,
+    "detected_plate": "KA05MH8899",
+    "ocr_confidence": 0.92,
+    "timestamp": "2026-09-02T14:18:34Z",
+    "video_file": "cam_02_central_junction.mp4"
+  },
+  {
+    "detection_id": "DET-003",
+    "camera_id": "CAM-309",
+    "location_name": "East Boulevard Flyover",
+    "latitude": 12.9845,
+    "longitude": 77.6150,
+    "detected_plate": "KA05MH8899",
+    "ocr_confidence": 0.91,
+    "timestamp": "2026-09-02T14:27:19Z",
+    "video_file": "cam_03_east_boulevard.mp4"
+  },
+  {
+    "detection_id": "DET-004",
+    "camera_id": "CAM-412",
+    "location_name": "South Expressway Toll",
+    "latitude": 12.9910,
+    "longitude": 77.6298,
+    "detected_plate": "KA05MH8899",
+    "ocr_confidence": 0.94,
+    "timestamp": "2026-09-02T14:38:04Z",
+    "video_file": "cam_04_south_expressway.mp4"
+  }
+]

@@ -92,24 +92,31 @@ h1, h2, h3, h4, .font-heading {
   background: rgba(0, 242, 254, 0.5);
 }
 
-/* Leaflet Dark Mode Customizations */
+/* Leaflet Map Customizations */
 .leaflet-container {
   background: #090d16 !important;
   font-family: 'Inter', sans-serif !important;
   border-radius: 12px;
 }
 
-.leaflet-tile {
+/* Specific filter only for tactical dark mode override when requested */
+.tactical-invert .leaflet-tile {
   filter: brightness(0.7) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.65);
 }
 
 .leaflet-popup-content-wrapper {
   background: rgba(15, 23, 42, 0.95) !important;
   color: #f8fafc !important;
-  border: 1px solid rgba(0, 242, 254, 0.3) !important;
-  border-radius: 8px !important;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+  border: 1px solid rgba(0, 242, 254, 0.35) !important;
+  border-radius: 10px !important;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6) !important;
+  padding: 2px !important;
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px !important;
+  line-height: 1.4 !important;
 }
 
 .leaflet-popup-tip {
