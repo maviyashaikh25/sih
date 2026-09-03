@@ -1,10 +1,31 @@
 import json
-import os
 
 with open('scratch/quick_detections.json') as f:
     quick = json.load(f)
 
-# Camera metadata
+def compute_iou(b1, b2):
+    # b format: left, top, width, height as floats 0-100
+    x1_1, y1_1 = float(b1['left'].replace('%', '')), float(b1['top'].replace('%', ''))
+    w1, h1 = float(b1['width'].replace('%', '')), float(b1['height'].replace('%', ''))
+    x2_1, y2_1 = x1_1 + w1, y1_1 + h1
+
+    x1_2, y1_2 = float(b2['left'].replace('%', '')), float(b2['top'].replace('%', ''))
+    w2, h2 = float(b2['width'].replace('%', '')), float(b2['height'].replace('%', ''))
+    x2_2, y2_2 = x1_2 + w2, y1_2 + h2
+
+    xi1 = max(x1_1, x1_2)
+    yi1 = max(y1_1, y1_2)
+    xi2 = min(x2_1, x2_2)
+    yi2 = min(y2_1, y2_2)
+
+    inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    b1_area = w1 * h1
+    b2_area = w2 * h2
+    union_area = b1_area + b2_area - inter_area
+    if union_area <= 0:
+        return 0.0
+    return inter_area / union_area
+
 cam_meta = {
     "CAM_KG_01": {"name": "Kashmere Gate ISBT", "zone": "North Delhi"},
     "CAM_CP_01": {"name": "Connaught Place Radial 1", "zone": "Central Delhi"},
@@ -16,26 +37,28 @@ cam_meta = {
     "CAM_NP_01": {"name": "Nehru Place Terminal", "zone": "South East Delhi"},
 }
 
-# License plate assignment logic tailored to the passing vehicles
-# DL01AB1234 is the primary hotlist corridor vehicle that traverses Step 1 -> 2 -> 3 -> 4
 plate_assignments = {
     "CAM_KG_01": {
+        "Red Bus": {"plate": "DL01PC2145", "type": "Red DTC Bus", "speed": 34, "hotlist": False},
         "Bus": {"plate": "DL01PC2145", "type": "Red DTC Bus", "speed": 34, "hotlist": False},
-        "Silver Car": {"plate": "DL01AB1234", "type": "Black SUV", "speed": 54, "hotlist": True}, # target vehicle traversing corridor
+        "Silver Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 54, "hotlist": True},
         "White Car": {"plate": "DL03CC8899", "type": "White Sedan", "speed": 48, "hotlist": False},
         "Grey Car": {"plate": "DL10AB6702", "type": "Grey Hatchback", "speed": 42, "hotlist": False},
     },
     "CAM_CP_01": {
-        "Red Car": {"plate": "DL08CA1020", "type": "Red Hatchback", "speed": 46, "hotlist": False},
-        "Black Motorcycle": {"plate": "UP07AB8957", "type": "White/Black Bike", "speed": 38, "hotlist": False},
-        "Grey Car": {"plate": "DL01AB1234", "type": "Black SUV", "speed": 49, "hotlist": True}, # target vehicle traversing corridor
+        # The primary vehicle in this camera is the Black Volvo XC60 with KA02MN1826
+        "Black Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 45, "hotlist": True},
+        "Grey Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 45, "hotlist": True},
+        "Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 45, "hotlist": True},
+        "Red Car": {"plate": "DL08CA1020", "type": "Red Hatchback", "speed": 0, "hotlist": False},
+        "Black Motorcycle": {"plate": "UP07AB8957", "type": "White/Black Bike", "speed": 0, "hotlist": False},
         "White Car": {"plate": "DL05AK3344", "type": "White Sedan", "speed": 44, "hotlist": False},
-        "Grey Motorcycle": {"plate": "DL06BN9911", "type": "Grey Scooter", "speed": 36, "hotlist": False},
+        "Grey Motorcycle": {"plate": "DL06BN9911", "type": "Grey Scooter", "speed": 0, "hotlist": False},
         "Blue Car": {"plate": "HR26DQ9988", "type": "Blue Sedan", "speed": 51, "hotlist": False},
         "White Truck": {"plate": "HR02DM5719", "type": "White Commercial", "speed": 35, "hotlist": False},
     },
     "CAM_IG_01": {
-        "White Car": {"plate": "DL01AB1234", "type": "Black SUV", "speed": 52, "hotlist": True}, # target vehicle traversing corridor
+        "White Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 52, "hotlist": True},
         "Grey Car": {"plate": "UP16AX5544", "type": "Grey Sedan", "speed": 50, "hotlist": False},
         "Black Motorcycle": {"plate": "DL09EF7711", "type": "Motorcycle", "speed": 40, "hotlist": False},
         "Blue Car": {"plate": "DL03CC8899", "type": "Blue Sedan", "speed": 48, "hotlist": False},
@@ -44,7 +67,7 @@ plate_assignments = {
     },
     "CAM_AIIMS_01": {
         "White Truck": {"plate": "DL09EF7711", "type": "White SUV/Camper", "speed": 58, "hotlist": False},
-        "Black Car": {"plate": "DL01AB1234", "type": "Black SUV", "speed": 62, "hotlist": True}, # target vehicle final intercept
+        "Black Car": {"plate": "KA02MN1826", "type": "Black Volvo SUV", "speed": 62, "hotlist": True},
         "White Car": {"plate": "DL03CC8899", "type": "White Sedan", "speed": 53, "hotlist": False},
         "Grey Car": {"plate": "HR26DQ9988", "type": "Grey Sedan", "speed": 55, "hotlist": False},
         "Red Car": {"plate": "UP07AB8957", "type": "Red Hatchback", "speed": 47, "hotlist": False},
@@ -65,30 +88,61 @@ for cam_id, data in quick.items():
     
     for kf in raw_keyframes:
         t = kf["time"]
+        
+        # Sort raw vehicles by confidence descending
+        sorted_vehicles = sorted(kf["vehicles"], key=lambda x: x["conf"], reverse=True)
+        
+        # Non-Maximum Suppression and sidewalk clutter suppression
+        keep_vehicles = []
+        seen_bike = False
+        for v in sorted_vehicles:
+            v_t = v["vehicle_type"]
+            # In CAM_CP_01, the sidewalk on the left has a cluster of parked bikes (x < 25%)
+            # Keep at most one bike on that sidewalk to prevent visual clutter
+            left_val = float(v["left"].replace("%", ""))
+            if cam_id == "CAM_CP_01" and v_t in ["Motorcycle"] and left_val < 25.0:
+                if seen_bike:
+                    continue
+                seen_bike = True
+                
+            is_dup = False
+            for kv in keep_vehicles:
+                iou = compute_iou(v, kv)
+                if iou > 0.25:
+                    is_dup = True
+                    break
+            if not is_dup:
+                keep_vehicles.append(v)
+                
         boxes = []
-        for v in kf["vehicles"]:
+        for v in keep_vehicles:
             v_type = v["vehicle_type"]
             v_color = v["vehicle_color"]
             combo = f"{v_color} {v_type}"
             
-            # Match plate
             c_plates = plate_assignments.get(cam_id, {})
-            plate_info = c_plates.get(combo) or c_plates.get(v_type) or {
-                "plate": f"DL{hash(cam_id + combo) % 90 + 10}AB{hash(combo) % 9000 + 1000}",
-                "type": f"{v_color} {v_type}",
-                "speed": 45,
-                "hotlist": False
-            }
+            plate_info = c_plates.get(combo) or c_plates.get(v_type)
+            if not plate_info:
+                # Default generic fallback
+                plate_info = {
+                    "plate": f"DL{hash(cam_id + combo) % 90 + 10}AB{hash(combo) % 9000 + 1000}",
+                    "type": f"{v_color} {v_type}",
+                    "speed": 45,
+                    "hotlist": False
+                }
+            
+            # Use high confidence for recognized plate
+            box_conf = 0.96 if plate_info["plate"] == "KA02MN1826" else v["conf"]
             
             box_item = {
                 "plate": plate_info["plate"],
-                "conf": v["conf"],
+                "conf": box_conf,
                 "top": v["top"],
                 "left": v["left"],
                 "width": v["width"],
                 "height": v["height"],
                 "type": plate_info["type"],
-                "speed": f"{plate_info['speed']} km/h",
+                "speed": f"{plate_info['speed']} km/h" if plate_info['speed'] > 0 else "Parked",
                 "speed_num": plate_info["speed"],
                 "hotlist": plate_info.get("hotlist", False)
             }
@@ -96,7 +150,7 @@ for cam_id, data in quick.items():
             
             # Check passing event trigger
             p_key = f"{cam_id}_{plate_info['plate']}"
-            if p_key not in seen_passing:
+            if p_key not in seen_passing and plate_info["speed"] > 0:
                 seen_passing.add(p_key)
                 meta = cam_meta.get(cam_id, {"name": cam_id, "zone": "City Zone"})
                 passing_events.append({
@@ -105,7 +159,7 @@ for cam_id, data in quick.items():
                     "camera_name": meta["name"],
                     "zone": meta["zone"],
                     "plate_number": plate_info["plate"],
-                    "confidence": v["conf"],
+                    "confidence": box_conf,
                     "vehicle_type": plate_info["type"],
                     "vehicle_color": v_color,
                     "speed_estimate_kmh": plate_info["speed"],
@@ -128,4 +182,4 @@ for cam_id, data in quick.items():
 with open("frontend/src/data/videoTimelineDetections.json", "w") as f:
     json.dump(timelines, f, indent=2)
 
-print("Generated frontend/src/data/videoTimelineDetections.json successfully!")
+print("Updated frontend/src/data/videoTimelineDetections.json with KA02MN1826 and NMS deduplication!")

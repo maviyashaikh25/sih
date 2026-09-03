@@ -12,7 +12,6 @@ class Settings(BaseModel):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
-        "*"
     ]
     # Default city center coordinates (New Delhi as prototype benchmark)
     DEFAULT_CITY_LAT: float = 28.6139

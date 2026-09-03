@@ -33,7 +33,8 @@ export default function TrajectoryTab({
 
   // Quick select plate options
   const DEFAULT_DEMO_PLATES = [
-    { plate: "DL01AB1234", label: "Corridor Target", type: "CRITICAL ALERT" },
+    { plate: "KA02MN1826", label: "Black Volvo SUV", type: "CRITICAL ALERT" },
+    { plate: "DL01AB1234", label: "Corridor Target", type: "HOTLIST SCORPIO" },
     { plate: "HR26DQ9988", label: "White Creta", type: "STOLEN VEHICLE" },
     { plate: "UP16AX5544", label: "Silver Sedan", type: "REPEAT VIOLATOR" },
     { plate: "DL03CC8899", label: "Civilian Commuter", type: "NORMAL" }

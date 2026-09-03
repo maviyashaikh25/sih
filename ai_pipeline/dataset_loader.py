@@ -3,181 +3,192 @@ import cv2
 import glob
 import shutil
 import random
-import numpy as np
+import xml.etree.ElementTree as ET
 from typing import List, Tuple, Optional
 
-DATASET_HANDLE = "nimishshandilya/car-number-plate-video"
+DATASET_HANDLE = "saisirishan/indian-vehicle-dataset"
 DATA_ROOT = os.path.abspath("data")
 KAGGLE_DIR = os.path.join(DATA_ROOT, "kaggle_dataset")
 YOLO_DATASET_DIR = os.path.join(DATA_ROOT, "yolo_plate_dataset")
 
-# Sample Indian Plate numbers for synthetic augmentation
-INDIAN_PLATE_TEMPLATES = [
-    "DL01AB1234", "HR26DQ9988", "UP16AX5544", "MH12DE1432", "KA05MJ9876",
-    "GJ01AB7788", "TN09AK4321", "WB02AZ6543", "RJ14CA9012", "CH01BK3456",
-    "DL03CC8899", "HR10EA5678", "UP32BZ1122", "MH02CB3344", "KA01AB9900"
-]
+# Known default cache location on Windows
+DEFAULT_KAGGLE_CACHE = r"C:\Users\Maviya Shaikh\.cache\kagglehub\datasets\saisirishan\indian-vehicle-dataset\versions\1"
 
-def apply_augmentations(image: np.ndarray) -> np.ndarray:
-    """Applies realistic CCTV augmentations: motion blur, contrast/brightness jitter, perspective shear."""
-    aug = image.copy()
-    h, w = aug.shape[:2]
+def find_kaggle_dataset_dir() -> Optional[str]:
+    """Locates the downloaded Indian Vehicle Dataset directory."""
+    # 1. Check explicit default path if present
+    if os.path.exists(DEFAULT_KAGGLE_CACHE):
+        return os.path.abspath(DEFAULT_KAGGLE_CACHE)
 
-    # 1. Random Brightness / Contrast Jitter
-    alpha = random.uniform(0.75, 1.30) # Contrast
-    beta = random.randint(-25, 25)      # Brightness
-    aug = np.clip(alpha * aug + beta, 0, 255).astype(np.uint8)
+    # 2. Check local data root
+    if os.path.exists(KAGGLE_DIR) and len(os.listdir(KAGGLE_DIR)) > 0:
+        return os.path.abspath(KAGGLE_DIR)
 
-    # 2. Random Motion Blur
-    if random.random() > 0.4:
-        ksize = random.choice([3, 5])
-        kernel = np.zeros((ksize, ksize))
-        kernel[int((ksize - 1) / 2), :] = np.ones(ksize)
-        kernel = kernel / ksize
-        aug = cv2.filter2D(aug, -1, kernel)
+    # 3. Check user home cache directory
+    home = os.path.expanduser("~")
+    cache_path = os.path.join(home, ".cache", "kagglehub", "datasets", "saisirishan", "indian-vehicle-dataset", "versions", "1")
+    if os.path.exists(cache_path):
+        return os.path.abspath(cache_path)
 
-    # 3. Slight Perspective Shear
-    if random.random() > 0.5:
-        dx = random.randint(2, max(4, int(w * 0.05)))
-        dy = random.randint(2, max(4, int(h * 0.05)))
-        pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
-        pts2 = np.float32([[dx, dy], [w - dx, 0], [0, h - dy], [w, h]])
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        aug = cv2.warpPerspective(aug, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+    # 4. Fallback to kagglehub download if network/auth permits
+    try:
+        import kagglehub
+        download_path = kagglehub.dataset_download(DATASET_HANDLE)
+        if os.path.exists(download_path):
+            return os.path.abspath(download_path)
+    except Exception as e:
+        print(f"Notice from kagglehub: {e}")
+        
+    return None
 
-    return aug
-
-def generate_synthetic_plate_sample(plate_text: str, bg_size: Tuple[int, int] = (640, 480)) -> Tuple[np.ndarray, List[float]]:
+def parse_voc_xml(xml_path: str, img_w: int, img_h: int) -> List[List[float]]:
     """
-    Generates a realistic synthetic road frame with a vehicle and high-contrast license plate.
-    Returns: (frame_img, [class_id, x_center, y_center, width, height] normalized)
+    Parses Pascal VOC XML and converts plate bounding boxes to YOLO format.
+    Format: [class_id, x_center, y_center, width, height] normalized [0..1]
     """
-    w, h = bg_size
-    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    boxes = []
+    if img_w <= 0 or img_h <= 0:
+        return boxes
+
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        for obj in root.findall("object"):
+            bnd = obj.find("bndbox")
+            if bnd is not None:
+                xmin_elem = bnd.find("xmin")
+                ymin_elem = bnd.find("ymin")
+                xmax_elem = bnd.find("xmax")
+                ymax_elem = bnd.find("ymax")
+
+                if xmin_elem is None or ymin_elem is None or xmax_elem is None or ymax_elem is None:
+                    continue
+
+                xmin = float(xmin_elem.text)
+                ymin = float(ymin_elem.text)
+                xmax = float(xmax_elem.text)
+                ymax = float(ymax_elem.text)
+
+                # Clamp to image boundaries
+                xmin = max(0.0, min(float(img_w), xmin))
+                xmax = max(0.0, min(float(img_w), xmax))
+                ymin = max(0.0, min(float(img_h), ymin))
+                ymax = max(0.0, min(float(img_h), ymax))
+
+                bw = xmax - xmin
+                bh = ymax - ymin
+
+                # Discard zero or degenerate boxes
+                if bw >= 2 and bh >= 2:
+                    x_center = (xmin + xmax) / (2.0 * img_w)
+                    y_center = (ymin + ymax) / (2.0 * img_h)
+                    norm_w = bw / float(img_w)
+                    norm_h = bh / float(img_h)
+
+                    # Ensure strictly within [0..1]
+                    x_center = min(max(x_center, 0.0), 1.0)
+                    y_center = min(max(y_center, 0.0), 1.0)
+                    norm_w = min(max(norm_w, 0.0), 1.0)
+                    norm_h = min(max(norm_h, 0.0), 1.0)
+
+                    boxes.append([0, round(x_center, 6), round(y_center, 6), round(norm_w, 6), round(norm_h, 6)])
+    except Exception as e:
+        print(f"Warning parsing {xml_path}: {e}")
+
+    return boxes
+
+def build_yolo_dataset_from_kaggle(seed: int = 42, max_samples: Optional[int] = None, dataset_dir: Optional[str] = None) -> str:
+    """
+    Loads real Indian vehicle images and VOC XML annotations from Kaggle dataset,
+    converts to YOLO format, splits into train/val/test, and writes data.yaml.
+    """
+    if not dataset_dir:
+        dataset_dir = find_kaggle_dataset_dir()
+    if not dataset_dir or not os.path.exists(dataset_dir):
+        raise FileNotFoundError("Could not find downloaded Indian Vehicle Dataset.")
+
+    print(f"Scanning Indian Vehicle Dataset from: {dataset_dir}")
     
-    # Asphalt road background with texture
-    road_color = random.randint(35, 55)
-    frame[:] = (road_color, road_color, road_color)
-    
-    # Add road lane markings
-    lane_color = (220, 220, 220)
-    cv2.line(frame, (w // 2, 0), (w // 2, h), lane_color, 4)
+    # Collect all image-xml pairs
+    pairs = []
+    for root, _, files in os.walk(dataset_dir):
+        for f in files:
+            if f.endswith(".xml"):
+                xml_path = os.path.join(root, f)
+                base_no_ext = os.path.splitext(xml_path)[0]
+                img_path = None
+                for ext in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+                    cand = base_no_ext + ext
+                    if os.path.exists(cand):
+                        img_path = cand
+                        break
+                if not img_path and (f.endswith(".jpg.xml") or f.endswith(".png.xml") or f.endswith(".jpeg.xml")):
+                    cand = xml_path[:-4]
+                    if os.path.exists(cand):
+                        img_path = cand
+                
+                if img_path:
+                    pairs.append((img_path, xml_path))
 
-    # Vehicle body rectangle
-    veh_w = random.randint(240, 360)
-    veh_h = random.randint(160, 240)
-    vx1 = (w - veh_w) // 2 + random.randint(-40, 40)
-    vy1 = (h - veh_h) // 2 + random.randint(-30, 30)
-    vx2 = vx1 + veh_w
-    vy2 = vy1 + veh_h
+    print(f"Total matching Image-XML pairs found: {len(pairs)}")
+    if len(pairs) == 0:
+        raise ValueError(f"No valid image-xml pairs found in {dataset_dir}")
 
-    body_color = random.choice([
-        (30, 30, 180),   # Red
-        (180, 80, 30),   # Blue
-        (30, 30, 30),    # Black
-        (200, 200, 200), # White
-        (120, 120, 120)  # Grey
-    ])
-    cv2.rectangle(frame, (vx1, vy1), (vx2, vy2), body_color, -1)
-    cv2.rectangle(frame, (vx1, vy1), (vx2, vy2), (10, 10, 10), 2)
+    random.seed(seed)
+    random.shuffle(pairs)
 
-    # Rear/Front Windshield
-    cv2.rectangle(frame, (vx1 + 20, vy1 + 15), (vx2 - 20, vy1 + int(veh_h * 0.45)), (60, 80, 90), -1)
+    if max_samples and max_samples < len(pairs):
+        pairs = pairs[:max_samples]
 
-    # License Plate ROI on lower bumper
-    pw = random.randint(90, 140)
-    ph = int(pw * random.uniform(0.28, 0.36))
-    px1 = vx1 + (veh_w - pw) // 2
-    py1 = vy1 + int(veh_h * 0.70)
-    px2 = px1 + pw
-    py2 = py1 + ph
+    # Split: 80% train, 10% val, 10% test
+    n_total = len(pairs)
+    n_train = int(n_total * 0.80)
+    n_val = int(n_total * 0.10)
+    n_test = n_total - n_train - n_val
 
-    # White/Yellow Plate surface
-    plate_bg = (245, 245, 245) if random.random() > 0.2 else (30, 220, 240)
-    cv2.rectangle(frame, (px1, py1), (px2, py2), plate_bg, -1)
-    cv2.rectangle(frame, (px1, py1), (px2, py2), (10, 10, 10), 2)
-    # Blue IND strip
-    cv2.rectangle(frame, (px1, py1), (px1 + max(4, int(pw * 0.08)), py2), (180, 60, 20), -1)
-
-    # Render License Plate text
-    font_scale = pw / 220.0
-    cv2.putText(frame, plate_text, (px1 + int(pw * 0.12), py1 + int(ph * 0.75)),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (10, 10, 10), 2, cv2.LINE_AA)
-
-    # Apply realistic sensor noise & lighting
-    frame = apply_augmentations(frame)
-
-    # YOLO bounding box (class 0: license_plate) normalized [0..1]
-    norm_x = (px1 + px2) / (2.0 * w)
-    norm_y = (py1 + py2) / (2.0 * h)
-    norm_w = pw / float(w)
-    norm_h = ph / float(h)
-
-    bbox_yolo = [0, round(norm_x, 6), round(norm_y, 6), round(norm_w, 6), round(norm_h, 6)]
-    return frame, bbox_yolo
-
-def extract_frames_from_videos(video_dir: str, max_frames_per_vid: int = 40) -> List[str]:
-    """Extracts frames from any available video files in data directory."""
-    video_files = glob.glob(os.path.join(video_dir, "*.mp4")) + glob.glob(os.path.join(video_dir, "*.avi"))
-    saved_frames = []
-    
-    frames_out_dir = os.path.join(DATA_ROOT, "extracted_frames")
-    os.makedirs(frames_out_dir, exist_ok=True)
-
-    for vid_path in video_files:
-        cap = cv2.VideoCapture(vid_path)
-        count = 0
-        saved_from_vid = 0
-        vid_name = os.path.splitext(os.path.basename(vid_path))[0]
-
-        while cap.isOpened() and saved_from_vid < max_frames_per_vid:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if count % 5 == 0:
-                frame_path = os.path.join(frames_out_dir, f"{vid_name}_frame_{count}.jpg")
-                cv2.imwrite(frame_path, frame)
-                saved_frames.append(frame_path)
-                saved_from_vid += 1
-            count += 1
-        cap.release()
-
-    return saved_frames
-
-def build_yolo_dataset(total_samples: int = 150):
-    """Creates a complete YOLOv8 dataset with train/val/test splits and data.yaml."""
-    print(f"Building YOLO License Plate Dataset with {total_samples} samples...")
-    
-    splits = {
-        "train": int(total_samples * 0.70),
-        "val": int(total_samples * 0.20),
-        "test": total_samples - int(total_samples * 0.70) - int(total_samples * 0.20)
+    splits_data = {
+        "train": pairs[:n_train],
+        "val": pairs[n_train:n_train + n_val],
+        "test": pairs[n_train + n_val:]
     }
+
+    # Setup directories
+    if os.path.exists(YOLO_DATASET_DIR):
+        shutil.rmtree(YOLO_DATASET_DIR)
 
     for split in ["train", "val", "test"]:
         os.makedirs(os.path.join(YOLO_DATASET_DIR, "images", split), exist_ok=True)
         os.makedirs(os.path.join(YOLO_DATASET_DIR, "labels", split), exist_ok=True)
 
-    sample_idx = 0
-    for split, count in splits.items():
-        for i in range(count):
-            plate_text = random.choice(INDIAN_PLATE_TEMPLATES)
-            img, bbox = generate_synthetic_plate_sample(plate_text)
-            
-            img_filename = f"plate_{split}_{i:04d}.jpg"
-            lbl_filename = f"plate_{split}_{i:04d}.txt"
+    saved_counts = {"train": 0, "val": 0, "test": 0}
 
-            img_path = os.path.join(YOLO_DATASET_DIR, "images", split, img_filename)
-            lbl_path = os.path.join(YOLO_DATASET_DIR, "labels", split, lbl_filename)
+    for split, split_pairs in splits_data.items():
+        for idx, (img_path, xml_path) in enumerate(split_pairs):
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+            boxes = parse_voc_xml(xml_path, w, h)
+            if not boxes:
+                continue
 
-            cv2.imwrite(img_path, img)
-            with open(lbl_path, "w") as f:
-                f.write(f"{bbox[0]} {bbox[1]} {bbox[2]} {bbox[3]} {bbox[4]}\n")
-            
-            sample_idx += 1
+            file_stem = f"indian_plate_{split}_{idx:04d}"
+            out_img_name = f"{file_stem}.jpg"
+            out_lbl_name = f"{file_stem}.txt"
 
-    # Write data.yaml configuration file
-    yaml_content = f"""path: {os.path.abspath(YOLO_DATASET_DIR).replace(os.sep, '/')}
+            dst_img_path = os.path.join(YOLO_DATASET_DIR, "images", split, out_img_name)
+            dst_lbl_path = os.path.join(YOLO_DATASET_DIR, "labels", split, out_lbl_name)
+
+            cv2.imwrite(dst_img_path, img)
+            with open(dst_lbl_path, "w", encoding="utf-8") as f:
+                for b in boxes:
+                    f.write(f"{b[0]} {b[1]} {b[2]} {b[3]} {b[4]}\n")
+
+            saved_counts[split] += 1
+
+    # Generate data.yaml
+    abs_yolo_path = os.path.abspath(YOLO_DATASET_DIR).replace(os.sep, "/")
+    yaml_content = f"""path: {abs_yolo_path}
 train: images/train
 val: images/val
 test: images/test
@@ -186,37 +197,19 @@ names:
   0: license_plate
 """
     yaml_path = os.path.join(YOLO_DATASET_DIR, "data.yaml")
-    with open(yaml_path, "w") as f:
+    with open(yaml_path, "w", encoding="utf-8") as f:
         f.write(yaml_content)
 
-    print(f"[SUCCESS] Dataset built at {YOLO_DATASET_DIR}")
-    print(f"  - Train samples: {splits['train']}")
-    print(f"  - Val samples:   {splits['val']}")
-    print(f"  - Test samples:  {splits['test']}")
-    print(f"  - Config YAML:   {yaml_path}")
-    return yaml_path
+    print("=================================================================")
+    print("      YOLO Indian License Plate Dataset Compiled Successfully    ")
+    print("=================================================================")
+    print(f"  • Train Set: {saved_counts['train']} images with labels")
+    print(f"  • Val Set:   {saved_counts['val']} images with labels")
+    print(f"  • Test Set:  {saved_counts['test']} images with labels")
+    print(f"  • Config:    {yaml_path}")
+    print("=================================================================")
 
-def download_and_setup_dataset():
-    """Tries kagglehub download, extracts video frames, and compiles YOLO dataset."""
-    print(f"Checking Kaggle dataset '{DATASET_HANDLE}'...")
-    os.makedirs(KAGGLE_DIR, exist_ok=True)
-
-    try:
-        import kagglehub
-        download_path = kagglehub.dataset_download(DATASET_HANDLE)
-        print(f"Kaggle dataset downloaded to: {download_path}")
-        
-        for root, _, filenames in os.walk(download_path):
-            for fn in filenames:
-                src_path = os.path.join(root, fn)
-                dst_path = os.path.join(KAGGLE_DIR, fn)
-                shutil.copy2(src_path, dst_path)
-    except Exception as e:
-        print(f"Kagglehub download notice ({e}). Using existing video & synthetic generator.")
-
-    extract_frames_from_videos(DATA_ROOT)
-    yaml_path = build_yolo_dataset(total_samples=160)
     return yaml_path
 
 if __name__ == "__main__":
-    download_and_setup_dataset()
+    build_yolo_dataset_from_kaggle()

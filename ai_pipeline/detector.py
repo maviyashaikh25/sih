@@ -35,50 +35,109 @@ class VehicleDetector:
         self.vehicle_model = YOLO(vehicle_model_name)
         
         self.plate_model = None
-        if os.path.exists(plate_model_name):
-            try:
-                print(f"Loading fine-tuned License Plate Model ({plate_model_name})...")
-                self.plate_model = YOLO(plate_model_name)
-            except Exception as e:
-                print(f"Notice: Could not load plate model ({e}). Using morphological ROI detector.")
+        # Check primary and fallback locations for fine-tuned plate detector weights
+        candidate_paths = [
+            plate_model_name,
+            os.path.join(os.path.dirname(__file__), "best_plate_yolov8.pt"),
+            os.path.abspath("ai_pipeline/best_plate_yolov8.pt"),
+            os.path.abspath("weights/best_plate_yolov8.pt"),
+            os.path.join("weights", "best_plate_yolov8.pt"),
+            os.path.join("runs", "detect", "plate_model_training", "weights", "best.pt"),
+            os.path.join("runs", "detect", "runs", "detect", "plate_model_training", "weights", "best.pt")
+        ]
+        
+        for candidate in candidate_paths:
+            if candidate and os.path.exists(candidate):
+                try:
+                    print(f"Loading fine-tuned License Plate Model ({candidate})...")
+                    self.plate_model = YOLO(candidate)
+                    break
+                except Exception as e:
+                    print(f"Notice: Could not load plate model from {candidate} ({e}).")
 
-    def detect_vehicles(self, frame: np.ndarray, conf_threshold: float = 0.35) -> List[dict]:
+        if self.plate_model is None:
+            print("Notice: No trained plate model found. Operating with heuristic/morphological plate ROI detector.")
+
+    def detect_vehicles(self, frame: np.ndarray, conf_threshold: float = 0.30) -> List[dict]:
         """
-        Runs YOLO object detection to find vehicles in the frame.
-        Returns bounding boxes, vehicle class name, and confidence score.
+        Runs cascaded YOLO object detection:
+        1. Localizes vehicles in the frame (Car, Bus, Truck, Motorcycle)
+        2. Detects license plates across the whole frame & within vehicle crops
+        3. Fuses bounding boxes and extracts high-resolution plate crops
         """
+        h, w = frame.shape[:2]
         with torch.inference_mode():
-            results = self.vehicle_model(frame, verbose=False, conf=conf_threshold, imgsz=640)[0]
-        detections = []
+            v_results = self.vehicle_model(frame, verbose=False, conf=conf_threshold, imgsz=640)[0]
+        
+        # Frame-level license plate detections
+        frame_plates = []
+        if self.plate_model is not None:
+            try:
+                with torch.inference_mode():
+                    p_results = self.plate_model(frame, verbose=False, conf=0.18, imgsz=640)[0]
+                for pbox in p_results.boxes:
+                    px1, py1, px2, py2 = map(int, pbox.xyxy[0].tolist())
+                    pconf = float(pbox.conf[0].item())
+                    px1, py1 = max(0, px1), max(0, py1)
+                    px2, py2 = min(w, px2), min(h, py2)
+                    if px2 > px1 and py2 > py1:
+                        frame_plates.append({
+                            "bbox": (px1, py1, px2, py2),
+                            "conf": pconf,
+                            "crop": frame[py1:py2, px1:px2]
+                        })
+            except Exception:
+                pass
 
-        for box in results.boxes:
+        detections = []
+        assigned_plates = set()
+
+        for box in v_results.boxes:
             cls_id = int(box.cls[0].item())
             if cls_id in VEHICLE_CLASSES:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 conf = float(box.conf[0].item())
                 vehicle_type = VEHICLE_CLASSES[cls_id]
 
-                # Ensure within frame bounds
-                h, w = frame.shape[:2]
                 x1, y1 = max(0, x1), max(0, y1)
                 x2, y2 = min(w, x2), min(h, y2)
-
                 veh_crop = frame[y1:y2, x1:x2]
                 veh_color = self.estimate_vehicle_color(veh_crop) if veh_crop.size > 0 else "Unknown"
 
-                # Locate license plate ROI within vehicle crop
-                plate_bbox, plate_crop = self.locate_plate_roi(veh_crop)
+                # Check if any frame-level plate is inside or close to this vehicle bbox
+                matched_plate_bbox = None
+                matched_plate_crop = None
+                
+                for idx, fp in enumerate(frame_plates):
+                    if idx in assigned_plates:
+                        continue
+                    fpx1, fpy1, fpx2, fpy2 = fp["bbox"]
+                    # Plate center
+                    pcx, pcy = (fpx1 + fpx2) / 2.0, (fpy1 + fpy2) / 2.0
+                    # Check if plate center is inside vehicle bbox (with slight margin)
+                    if (x1 - 10) <= pcx <= (x2 + 10) and (y1 - 10) <= pcy <= (y2 + 10):
+                        matched_plate_bbox = (fpx1, fpy1, fpx2, fpy2)
+                        matched_plate_crop = fp["crop"]
+                        assigned_plates.add(idx)
+                        break
+
+                # If no frame-level plate match, locate ROI within vehicle crop
+                if matched_plate_crop is None or matched_plate_crop.size == 0:
+                    crop_plate_box, crop_plate_img = self.locate_plate_roi(veh_crop)
+                    if crop_plate_box and crop_plate_img is not None and crop_plate_img.size > 0:
+                        matched_plate_bbox = (
+                            x1 + crop_plate_box[0], y1 + crop_plate_box[1],
+                            x1 + crop_plate_box[2], y1 + crop_plate_box[3]
+                        )
+                        matched_plate_crop = crop_plate_img
 
                 detections.append({
                     "vehicle_bbox": (x1, y1, x2, y2),
                     "vehicle_type": vehicle_type,
                     "vehicle_color": veh_color,
                     "confidence": round(conf, 2),
-                    "plate_bbox_in_frame": (
-                        x1 + plate_bbox[0], y1 + plate_bbox[1],
-                        x1 + plate_bbox[2], y1 + plate_bbox[3]
-                    ) if plate_bbox else None,
-                    "plate_crop": plate_crop
+                    "plate_bbox_in_frame": matched_plate_bbox,
+                    "plate_crop": matched_plate_crop
                 })
 
         return detections
@@ -93,13 +152,13 @@ class VehicleDetector:
             return None, None
 
         vh, vw = vehicle_crop.shape[:2]
-        if vh < 40 or vw < 60:
+        if vh < 25 or vw < 35:
             return None, None
 
-        # 1. Try Deep Learning Plate Detector if available
+        # 1. Try Deep Learning Plate Detector on vehicle crop
         if self.plate_model is not None:
             try:
-                p_res = self.plate_model(vehicle_crop, verbose=False, conf=0.25)[0]
+                p_res = self.plate_model(vehicle_crop, verbose=False, conf=0.18)[0]
                 if len(p_res.boxes) > 0:
                     best_p_box = max(p_res.boxes, key=lambda b: float(b.conf[0].item()))
                     px1, py1, px2, py2 = map(int, best_p_box.xyxy[0].tolist())

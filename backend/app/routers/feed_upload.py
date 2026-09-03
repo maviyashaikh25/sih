@@ -87,7 +87,7 @@ async def upload_and_process_feed(
             zone=zone or "Custom Zone",
             road_name="Custom Ingest Point",
             camera_type="User Upload Stream",
-            status="ACTIVE"
+            is_active=True
         )
         db.add(cam)
         db.commit()

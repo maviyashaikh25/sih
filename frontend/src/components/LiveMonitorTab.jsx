@@ -148,7 +148,7 @@ export default function LiveMonitorTab({
               vehicle_color: evt.vehicle_color,
               speed_estimate_kmh: evt.speed_estimate_kmh,
               direction: evt.direction || "Inbound Flow",
-              hotlist: evt.hotlist || ["DL01AB1234", "HR26DQ9988", "UP16AX5544"].includes(evt.plate_number),
+              hotlist: evt.hotlist || ["KA02MN1826", "DL01AB1234", "HR26DQ9988", "UP16AX5544"].includes(evt.plate_number),
               timestamp: new Date().toISOString()
             };
             onNewDetection(newDetObj);
@@ -178,7 +178,7 @@ export default function LiveMonitorTab({
             onNewDetection({
               ...d,
               timestamp: d.timestamp || new Date().toISOString(),
-              hotlist: d.hotlist || ["DL01AB1234", "HR26DQ9988"].includes(d.plate_number)
+              hotlist: d.hotlist || ["KA02MN1826", "DL01AB1234", "HR26DQ9988"].includes(d.plate_number)
             });
           }
         });
@@ -590,7 +590,7 @@ export default function LiveMonitorTab({
               </div>
             ) : (
               filteredDetections.map((det, dIdx) => {
-                const isHotlist = det.hotlist || ["DL01AB1234", "HR26DQ9988", "UP16AX5544"].includes(det.plate_number);
+                const isHotlist = det.hotlist || ["KA02MN1826", "DL01AB1234", "HR26DQ9988", "UP16AX5544"].includes(det.plate_number);
                 const isRecent = dIdx < 2;
 
                 return (
