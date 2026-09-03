@@ -81,7 +81,8 @@ export default function LeafletMap({
   zoom = 13,
   mode = "TRAJECTORY", // 'TRAJECTORY', 'HEATMAP', 'CAMERAS'
   onCameraClick = null,
-  height = "520px"
+  height = "520px",
+  focusedLocation = null
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -89,10 +90,30 @@ export default function LeafletMap({
   const layerGroupRef = useRef(null);
   const wrapperRef = useRef(null);
 
-  const [activeTileKey, setActiveTileKey] = useState("satellite_hybrid");
+  const [activeTileKey, setActiveTileKey] = useState(
+    mode === "HEATMAP" ? "carto_dark" : "satellite_hybrid"
+  );
   const [cursorCoords, setCursorCoords] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [currentZoom, setCurrentZoom] = useState(zoom);
+
+  // Auto-switch to tactical dark basemap when entering HEATMAP mode for maximum contrast
+  useEffect(() => {
+    if (mode === "HEATMAP" && activeTileKey === "satellite_hybrid") {
+      handleLayerChange("carto_dark");
+    }
+  }, [mode]);
+
+  // Handle programmatic focus (flyTo) on requested location
+  useEffect(() => {
+    if (focusedLocation && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo(
+        [focusedLocation.latitude, focusedLocation.longitude],
+        15,
+        { animate: true, duration: 1.2 }
+      );
+    }
+  }, [focusedLocation]);
 
   // 1. Initialize Leaflet Map instance
   useEffect(() => {
@@ -344,44 +365,124 @@ export default function LeafletMap({
       map.fitBounds(latLngs, { padding: [50, 50] });
     }
 
-    // --- MODE 2: MACRO HEATMAP ---
+    // --- MODE 2: MACRO HEATMAP (DENSITY CIRCLES & COUNTS) ---
     else if (mode === "HEATMAP" && heatmapPoints && heatmapPoints.length > 0) {
       heatmapPoints.forEach(hp => {
         let circleColor = "#10b981"; // Low (Green)
-        if (hp.congestion_level === "CRITICAL") circleColor = "#ef4444"; // Red
-        else if (hp.congestion_level === "HIGH") circleColor = "#f97316"; // Orange
-        else if (hp.congestion_level === "MEDIUM") circleColor = "#eab308"; // Yellow
+        let statusBadge = "LOW";
 
-        const radius = Math.max(350, hp.vehicle_count * 50);
+        if (hp.congestion_level === "CRITICAL") {
+          circleColor = "#ef4444"; // Red
+          statusBadge = "CRITICAL";
+        } else if (hp.congestion_level === "HIGH") {
+          circleColor = "#f97316"; // Orange
+          statusBadge = "HIGH";
+        } else if (hp.congestion_level === "MEDIUM") {
+          circleColor = "#eab308"; // Yellow
+          statusBadge = "MEDIUM";
+        }
 
+        const radius = Math.max(700, hp.vehicle_count * 100); // 2x scaled radius
+        const isCritical = hp.congestion_level === "CRITICAL";
+
+        // 1. Classic Leaflet circle with density-based color, radius, and fill
         const circle = L.circle([hp.latitude, hp.longitude], {
           color: circleColor,
           fillColor: circleColor,
-          fillOpacity: 0.45 + (hp.intensity * 0.35),
+          fillOpacity: 0.38 + (hp.intensity * 0.32),
           weight: 2.5,
           radius: radius
         }).addTo(layerGroup);
 
-        circle.bindPopup(`
-          <div style="font-family: system-ui, -apple-system, sans-serif; min-width: 200px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-              <span style="color: ${circleColor}; font-weight: 800; font-size: 12px;">${hp.camera_name}</span>
-              <span style="background: ${circleColor}22; color: ${circleColor}; border: 1px solid ${circleColor}; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;">
-                ${hp.congestion_level}
+        // 2. High-contrast density count badge directly at the center of the circle
+        const badgeHtml = `
+          <div style="
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(15, 23, 42, 0.94);
+            border: 2px solid ${circleColor};
+            color: #ffffff;
+            border-radius: 9999px;
+            padding: 2.5px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 800;
+            white-space: nowrap;
+            box-shadow: 0 0 12px ${circleColor}88, 0 3px 8px rgba(0,0,0,0.85);
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+          ">
+            <span style="
+              width: 7px;
+              height: 7px;
+              border-radius: 50%;
+              background: ${circleColor};
+              display: inline-block;
+              ${isCritical ? 'box-shadow: 0 0 8px #ef4444; animation: ping 1.2s cubic-bezier(0, 0, 0.2, 1) infinite;' : ''}
+            "></span>
+            <span style="color: #ffffff;">${hp.vehicle_count} veh</span>
+            <span style="color: ${circleColor}; font-size: 10px; font-weight: 700;">• ${(hp.intensity * 100).toFixed(0)}%</span>
+          </div>
+        `;
+
+        const countIcon = L.divIcon({
+          html: badgeHtml,
+          className: "density-center-badge",
+          iconSize: [0, 0]
+        });
+
+        const countMarker = L.marker([hp.latitude, hp.longitude], {
+          icon: countIcon,
+          zIndexOffset: isCritical ? 500 : 100
+        }).addTo(layerGroup);
+
+        const popupContent = `
+          <div style="font-family: system-ui, -apple-system, sans-serif; min-width: 220px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px;">
+              <span style="color: ${circleColor}; font-weight: 800; font-size: 13px;">${hp.camera_name}</span>
+              <span style="background: ${circleColor}22; color: ${circleColor}; border: 1px solid ${circleColor}; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;">
+                ${statusBadge} CONGESTION
               </span>
             </div>
-            <div style="background: rgba(15, 23, 42, 0.85); border-radius: 6px; padding: 6px 8px; font-size: 11px; margin-top: 6px; border: 1px solid rgba(56, 189, 248, 0.25);">
-              <div style="color: #cbd5e1; display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span>Rolling Count:</span>
-                <b style="color: #ffffff;">${hp.vehicle_count} vehicles</b>
+            <div style="background: rgba(15, 23, 42, 0.85); border-radius: 8px; padding: 8px 10px; font-size: 11px; border: 1px solid rgba(56, 189, 248, 0.25);">
+              <div style="color: #cbd5e1; display: flex; justify-content: space-between; margin-bottom: 3px;">
+                <span style="color: #94a3b8;">Sensor ID:</span>
+                <b style="color: #38bdf8; font-family: monospace;">${hp.camera_id}</b>
               </div>
-              <div style="color: #94a3b8; display: flex; justify-content: space-between;">
-                <span>Density Index:</span>
-                <b style="color: ${circleColor};">${(hp.intensity * 100).toFixed(0)}%</b>
+              <div style="color: #cbd5e1; display: flex; justify-content: space-between; margin-bottom: 3px;">
+                <span style="color: #94a3b8;">Rolling Vehicle Count:</span>
+                <b style="color: #ffffff; font-family: monospace;">${hp.vehicle_count} vehicles</b>
+              </div>
+              <div style="color: #cbd5e1; display: flex; justify-content: space-between; margin-bottom: 3px;">
+                <span style="color: #94a3b8;">Density Level:</span>
+                <b style="color: ${circleColor}; font-family: monospace;">${(hp.intensity * 100).toFixed(0)}%</b>
+              </div>
+              <div style="color: #cbd5e1; display: flex; justify-content: space-between;">
+                <span style="color: #94a3b8;">Circle Radius:</span>
+                <b style="color: #cbd5e1; font-family: monospace;">${radius}m</b>
               </div>
             </div>
           </div>
-        `);
+        `;
+
+        circle.bindPopup(popupContent);
+        countMarker.bindPopup(popupContent);
+
+        // Hover tooltip on the circle
+        circle.bindTooltip(`
+          <div style="font-family: system-ui, sans-serif; font-size: 11px;">
+            <b style="color: ${circleColor};">${hp.camera_name}</b>: ${hp.vehicle_count} vehicles (${statusBadge})
+          </div>
+        `, { direction: "top", offset: [0, -10], opacity: 0.95 });
+
+        circle.on('click', () => {
+          map.panTo([hp.latitude, hp.longitude], { animate: true });
+        });
+        countMarker.on('click', () => {
+          map.panTo([hp.latitude, hp.longitude], { animate: true });
+        });
       });
     }
 
@@ -525,6 +626,28 @@ export default function LeafletMap({
           {TILE_PROVIDERS[activeTileKey]?.name}
         </span>
       </div>
+
+      {/* Tactical Heatmap Scale HUD (Bottom Right) */}
+      {mode === "HEATMAP" && (
+        <div className="absolute bottom-3 right-3 z-[1000] hidden sm:flex flex-col gap-1.5 bg-slate-950/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-cyan-500/30 shadow-2xl">
+          <div className="flex items-center justify-between text-[10px] font-mono font-bold tracking-wider text-slate-300 gap-4">
+            <span className="flex items-center gap-1.5 text-cyan-400">
+              <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
+              THERMAL RADAR
+            </span>
+            <span className="text-slate-400 font-mono text-[9px]">{heatmapPoints?.length || 0} NODES</span>
+          </div>
+          
+          {/* Continuous Cybernetic Gradient Bar */}
+          <div className="w-44 h-2 rounded-full bg-gradient-to-r from-emerald-500 via-amber-400 via-orange-500 to-red-500 shadow-inner border border-slate-700/60"></div>
+          
+          <div className="flex items-center justify-between text-[9px] font-mono text-slate-400">
+            <span className="text-emerald-400">0% FREE</span>
+            <span className="text-amber-400">50% MOD</span>
+            <span className="text-red-400">100% GRID</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

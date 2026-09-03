@@ -27,7 +27,7 @@ export default function UploadFeedModal({
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  
+
   // Camera Selection & Configuration
   const [selectedCamId, setSelectedCamId] = useState(cameras[0]?.id || "CAM_CP_01");
   const [isCustomCamera, setIsCustomCamera] = useState(false);
@@ -136,7 +136,7 @@ export default function UploadFeedModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
       <div className="relative w-full max-w-3xl rounded-2xl border border-cyan-500/40 bg-slate-950 shadow-2xl shadow-cyan-500/20 overflow-hidden my-8">
-        
+
         {/* Modal Header */}
         <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -165,7 +165,7 @@ export default function UploadFeedModal({
 
         {/* Modal Body */}
         <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
-          
+
           {error && (
             <div className="p-3 bg-red-950/40 border border-red-500/50 rounded-xl text-xs text-red-300 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
@@ -180,13 +180,12 @@ export default function UploadFeedModal({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onClick={() => fileInputRef.current?.click()}
-              className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-                isDragOver
+              className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${isDragOver
                   ? "border-cyan-400 bg-cyan-950/20 scale-[0.99]"
                   : file
-                  ? "border-emerald-500/60 bg-slate-900/60"
-                  : "border-slate-700 hover:border-cyan-500/50 bg-slate-900/40"
-              }`}
+                    ? "border-emerald-500/60 bg-slate-900/60"
+                    : "border-slate-700 hover:border-cyan-500/50 bg-slate-900/40"
+                }`}
             >
               <input
                 ref={fileInputRef}
@@ -383,11 +382,10 @@ export default function UploadFeedModal({
                     return (
                       <div
                         key={idx}
-                        className={`p-2.5 rounded-lg border transition-all ${
-                          isHotlist
+                        className={`p-2.5 rounded-lg border transition-all ${isHotlist
                             ? "bg-red-950/40 border-red-500 shadow-sm shadow-red-500/20"
                             : "bg-slate-900/70 border-slate-800"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">

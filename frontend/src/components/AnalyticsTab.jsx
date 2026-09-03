@@ -7,10 +7,13 @@ import {
   TrendingUp, 
   Activity, 
   MapPin, 
-  ArrowRight,
-  Clock,
-  Car,
-  PieChart
+  ArrowRight, 
+  Clock, 
+  Car, 
+  PieChart,
+  Crosshair,
+  Zap,
+  Radio
 } from "lucide-react";
 import { 
   AreaChart, 
@@ -38,6 +41,8 @@ const VEHICLE_COLORS = {
 export default function AnalyticsTab() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedHotspot, setSelectedHotspot] = useState(null);
+  const [filterLevel, setFilterLevel] = useState("ALL"); // 'ALL' | 'CRITICAL' | 'HIGH'
 
   const fetchAnalytics = async () => {
     try {
@@ -76,6 +81,16 @@ export default function AnalyticsTab() {
         { type: "Bus", count: 8, color: "#f59e0b" },
         { type: "Truck", count: 6, color: "#ef4444" }
       ];
+
+  const hotspotList = [...(analytics.heatmap || [])]
+    .sort((a, b) => b.vehicle_count - a.vehicle_count)
+    .slice(0, 4);
+
+  const displayedHeatmapPoints = (analytics.heatmap || []).filter(hp => {
+    if (filterLevel === "CRITICAL") return hp.congestion_level === "CRITICAL";
+    if (filterLevel === "HIGH") return hp.congestion_level === "CRITICAL" || hp.congestion_level === "HIGH";
+    return true;
+  });
 
   return (
     <div className="space-y-4">
@@ -118,26 +133,128 @@ export default function AnalyticsTab() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left 2 Cols: GIS Traffic Density Heatmap */}
         <div className="lg:col-span-2 space-y-3">
-          <div className="flex items-center justify-between">
+          {/* Header with Title and Mode Filters */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <Flame className="w-4 h-4 text-amber-400" />
-              <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
-                City-Wide Live Traffic Density Heatmap
-              </h2>
+              <div className="p-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                <Flame className="w-4 h-4 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                    City-Wide Live Traffic Density Radar
+                  </h2>
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    LIVE AI
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Thermal radiance clusters & real-time bottleneck detection
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 text-xs font-mono">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Normal</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Medium</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" /> Congested</span>
+
+            {/* Filter Toggle Buttons */}
+            <div className="flex items-center gap-1 p-1 bg-slate-900/90 rounded-lg border border-slate-800 text-xs font-mono">
+              <button
+                onClick={() => setFilterLevel("ALL")}
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  filterLevel === "ALL"
+                    ? "bg-cyan-500 text-slate-950 font-bold shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                All Nodes ({analytics.heatmap?.length || 0})
+              </button>
+              <button
+                onClick={() => setFilterLevel("HIGH")}
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  filterLevel === "HIGH"
+                    ? "bg-amber-500 text-slate-950 font-bold shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                High & Critical ({analytics.heatmap?.filter(h => h.congestion_level === 'CRITICAL' || h.congestion_level === 'HIGH').length || 0})
+              </button>
+              <button
+                onClick={() => setFilterLevel("CRITICAL")}
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  filterLevel === "CRITICAL"
+                    ? "bg-red-500 text-slate-950 font-bold shadow"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Gridlocks Only ({analytics.heatmap?.filter(h => h.congestion_level === 'CRITICAL').length || 0})
+              </button>
             </div>
           </div>
 
-          <div className="rounded-xl overflow-hidden border border-slate-800 shadow-lg">
+          {/* Quick-Jump Hotspots Interactive Chips */}
+          {hotspotList.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
+              <span className="flex items-center gap-1 text-[10px] font-mono text-cyan-400 font-bold uppercase shrink-0 mr-1">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                Hotspot Focus:
+              </span>
+              {hotspotList.map((hp) => {
+                const isSelected = selectedHotspot?.camera_id === hp.camera_id;
+                const isCritical = hp.congestion_level === "CRITICAL";
+                return (
+                  <button
+                    key={hp.camera_id}
+                    onClick={() => setSelectedHotspot(hp)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all shrink-0 ${
+                      isSelected
+                        ? "bg-red-500/20 border-red-500 text-red-300 shadow-md shadow-red-500/20 font-bold"
+                        : isCritical
+                        ? "bg-red-950/40 border-red-800/60 text-red-300 hover:bg-red-900/40 hover:border-red-500"
+                        : "bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white"
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${isCritical ? "bg-red-500 animate-ping" : "bg-amber-400"}`} />
+                    <span className="font-sans font-medium text-[11px]">{hp.camera_name}:</span>
+                    <span className="font-bold text-white text-[11px]">{hp.vehicle_count} veh</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Map Container */}
+          <div className="rounded-xl overflow-hidden border border-cyan-500/20 shadow-2xl">
             <LeafletMap
-              heatmapPoints={analytics.heatmap}
+              heatmapPoints={displayedHeatmapPoints}
               mode="HEATMAP"
-              height="440px"
+              focusedLocation={selectedHotspot}
+              height="450px"
             />
+          </div>
+
+          {/* Continuous Cybernetic Thermal Scale & Bottleneck Status Strip */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[10px] uppercase font-mono font-bold text-slate-400">Thermal Scale:</span>
+              <div className="w-36 sm:w-48 h-2 rounded-full bg-gradient-to-r from-emerald-500 via-amber-400 via-orange-500 to-red-500 shadow-inner border border-slate-700/50"></div>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] font-mono">
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                Free Flow (&lt;25%)
+              </span>
+              <span className="flex items-center gap-1 text-amber-400">
+                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                Moderate
+              </span>
+              <span className="flex items-center gap-1 text-orange-400">
+                <span className="w-2 h-2 rounded-full bg-orange-400"></span>
+                Heavy
+              </span>
+              <span className="flex items-center gap-1 text-red-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                Gridlock (&gt;75%)
+              </span>
+            </div>
           </div>
         </div>
 
